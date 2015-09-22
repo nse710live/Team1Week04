@@ -1,5 +1,6 @@
 package week04.data;
 
+import week04.app.Account;
 import week04.app.User;
 
 import java.sql.Connection;
@@ -14,8 +15,6 @@ import java.util.List;
 
 /**
  * DataAccess Singleton class used to connect to and query local MySQL database.
- *
- * Created by Matthew on 9/11/2015.
  */
 public class DataAccess {
 
@@ -28,6 +27,12 @@ public class DataAccess {
     private PreparedStatement m_deleteUser;
     private PreparedStatement m_selectSingleUser;
     private PreparedStatement m_updateUser;
+
+    private PreparedStatement m_selectAllAccounts;
+    private PreparedStatement m_selectAccountById;
+    private PreparedStatement m_insertAccount;
+    private PreparedStatement m_updateAccount;
+    private PreparedStatement m_deleteAccount;
 
     private static String m_user = "root";
     private static String m_password = "root";
@@ -98,11 +103,11 @@ public class DataAccess {
     }
 
     private void setupPreparedStatements() throws SQLException {
-        String INSERT_USER_SQL = "INSERT INTO atm.user VALUES (?, ?, ?, ?)";
-        String SELECT_ALL_USERS_SQL = "SELECT id, first_name, last_name FROM atm.user";
-        String DELETE_USER_BY_ID_SQL = "DELETE FROM atm.user WHERE id = (?)";
-        String SELECT_USER_SQL_FMT = "SELECT id, first_name, last_name FROM atm.user WHERE id = (?)";
-        String UPDATE_USER_SQL = "UPDATE atm.user SET first_name = (?), " +
+        final String INSERT_USER_SQL = "INSERT INTO atm.user VALUES (?, ?, ?, ?)";
+        final String SELECT_ALL_USERS_SQL = "SELECT id, first_name, last_name FROM atm.user";
+        final String DELETE_USER_BY_ID_SQL = "DELETE FROM atm.user WHERE id = (?)";
+        final String SELECT_USER_SQL_FMT = "SELECT id, first_name, last_name FROM atm.user WHERE id = (?)";
+        final String UPDATE_USER_SQL = "UPDATE atm.user SET first_name = (?), " +
                 "last_name = (?), last_update = (?) WHERE id = (?)";
 
         m_insertUser = m_connect.prepareStatement(INSERT_USER_SQL);
@@ -110,6 +115,19 @@ public class DataAccess {
         m_deleteUser = m_connect.prepareStatement(DELETE_USER_BY_ID_SQL);
         m_selectSingleUser = m_connect.prepareStatement(SELECT_USER_SQL_FMT);
         m_updateUser = m_connect.prepareStatement(UPDATE_USER_SQL);
+
+        final String SELECT_ALL_ACCOUNTS = "SELECT id, user_id, name, balance FROM atm.account";
+        final String SELECT_ACCOUNT_BY_ID = "SELECT id, user_id, name, balance FROM atm.account WHERE id = (?)";
+        final String INSERT_ACCOUNT_SQL = "INSERT INTO atm.account VALUES (?, ?, ?, ?, ?)";
+        final String UPDATE_ACCOUNT_SQL = "UPDATE atm.account SET user_id = (?), name = (?), " +
+                "balance = (?), last_update = (?) WHERE id = (?)";
+        final String DELETE_ACCOUNT_SQL = "DELETE FROM atm.account WHERE id = (?)";
+
+        m_selectAllAccounts = m_connect.prepareStatement(SELECT_ALL_ACCOUNTS);
+        m_selectAccountById = m_connect.prepareStatement(SELECT_ACCOUNT_BY_ID);
+        m_insertAccount = m_connect.prepareStatement(INSERT_ACCOUNT_SQL);
+        m_updateAccount = m_connect.prepareStatement(UPDATE_ACCOUNT_SQL);
+        m_deleteAccount = m_connect.prepareStatement(DELETE_ACCOUNT_SQL);
     }
 
     /**
@@ -238,5 +256,121 @@ public class DataAccess {
         }
 
         return userList;
+    }
+
+    /**
+     * Get a list of all Accounts
+     *
+     * @return - List of Accounts
+     * @throws AtmDataException
+     */
+    public List<Account> getAccounts() throws AtmDataException {
+        List<Account> accounts = new ArrayList<>();
+        ResultSet resultSet;
+
+        try {
+            if (m_connect == null || m_connect.isClosed()) connect();
+            resultSet = m_selectAllAccounts.executeQuery();
+
+            while (resultSet.next()) {
+                long accountId = resultSet.getLong("id");
+                long userId = resultSet.getLong("user_id");
+                String name = resultSet.getString("name");
+                double balance = resultSet.getDouble("balance");
+                User user = getUserById(userId);
+                accounts.add(new Account(accountId, user, name, balance));
+            }
+        } catch (SQLException ex) {
+            throw new AtmDataException(ex);
+        }
+
+        return accounts;
+    }
+
+    /**
+     * Get an account by ID
+     *
+     * @param id - Id of Account to be retrieved
+     * @return - Account Object
+     * @throws AtmDataException
+     */
+    public Account getAccountById(long id) throws AtmDataException {
+        Account account = null;
+        ResultSet resultSet;
+
+        try {
+            if (m_connect == null || m_connect.isClosed()) connect();
+
+            m_selectAccountById.setLong(1, id);
+            resultSet = m_selectAccountById.executeQuery();
+
+            while (resultSet.next()) {
+                account = new Account();
+                account.setAccountId(resultSet.getLong("id"));
+                account.setUser(getUserById(resultSet.getLong("user_id")));
+                account.setName(resultSet.getString("name"));
+                account.setBalance(resultSet.getDouble("balance"));
+            }
+
+        } catch (SQLException ex) {
+            throw new AtmDataException(ex);
+        }
+
+        return account;
+    }
+
+    /**
+     * Save account. If account already exists, it will be updated.
+     *
+     * @param account - Account to be saved
+     * @return - updated account
+     * @throws AtmDataException
+     */
+    public Account saveAccount(Account account) throws AtmDataException {
+        Calendar now = Calendar.getInstance();
+        Date updateDate = new Date(now.getTime().getTime());
+
+        try {
+
+            if (m_connect == null || m_connect.isClosed()) connect();
+
+            // first see it user already exists
+            Account existingAccount = getAccountById(account.getAccountId());
+            if (existingAccount != null && existingAccount.getAccountId() == account.getAccountId()) {
+                m_updateAccount.setLong(1, account.getUser().getUserId());
+                m_updateAccount.setString(2, account.getName());
+                m_updateAccount.setDouble(3, account.getBalance());
+                m_updateAccount.setDate(4, updateDate);
+                m_updateAccount.setLong(5, account.getAccountId());
+                m_updateAccount.executeUpdate();
+            } else {
+                m_insertAccount.setLong(1, account.getAccountId());
+                m_insertAccount.setLong(2, account.getUser().getUserId());
+                m_insertAccount.setString(3, account.getName());
+                m_insertAccount.setDouble(4, account.getBalance());
+                m_insertAccount.setDate(5, updateDate);
+                m_insertAccount.executeUpdate();
+            }
+            return getAccountById(account.getAccountId());
+        } catch (SQLException ex) {
+            throw new AtmDataException(ex);
+        }
+    }
+
+    /**
+     * Remove an account from database
+     *
+     * @param account - Account to be removed
+     * @throws AtmDataException
+     */
+    public void removeAccount(Account account) throws AtmDataException {
+        try {
+            if (m_connect == null || m_connect.isClosed()) connect();
+            m_deleteAccount.setLong(1, account.getAccountId());
+            m_deleteAccount.executeUpdate();
+
+        } catch (SQLException ex) {
+            throw new AtmDataException(ex);
+        }
     }
 }
